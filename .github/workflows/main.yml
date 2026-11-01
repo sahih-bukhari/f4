@@ -1,0 +1,54 @@
+name: Publish website branch
+
+on:
+  push:
+    branches: [main, master]
+    paths: ['*.zip']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip project
+        run: |
+          ZIP=$(ls -1 *.zip 2>/dev/null | head -n 1)
+          if [ -z "$ZIP" ]; then echo "No .zip in repo root"; exit 1; fi
+          rm -rf /tmp/site && mkdir /tmp/site
+          unzip -q "$ZIP" -d /tmp/site
+          cd /tmp/site
+          if [ "$(ls -A | wc -l)" -eq 1 ] && [ -d "$(ls -A)" ]; then
+            echo "SRC=/tmp/site/$(ls -A)" >> "$GITHUB_ENV"
+          else
+            echo "SRC=/tmp/site" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: env.DATABASE_URL != ''
+        with:
+          node-version: 22
+
+      - name: Create database tables (only if DATABASE_URL secret is set)
+        if: env.DATABASE_URL != ''
+        run: |
+          cd "$SRC"
+          npm install --no-audit --no-fund
+          npm run db:migrate
+
+      - name: Push to branch "site"
+        run: |
+          cd "$SRC"
+          rm -rf .github
+          git init -q -b site
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add -A
+          git commit -qm "Website from zip"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" site
